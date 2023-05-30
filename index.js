@@ -10,7 +10,6 @@ const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster
 app.use(cors())
 app.use(express.json())
 
-// JWT
 
 
 
@@ -32,6 +31,13 @@ async function run() {
     const menuCollection = client.db("bistroBoss").collection("menu");
     const cartCollection = client.db("bistroBoss").collection("cart");
     const usersCollection = client.db("bistroBoss").collection("users");
+
+    // JWT
+app.post("/jwt", async(req,res)=>{
+  const user = req.body;
+  const token = jwt.sign(user , process.env.ACCESS_TOKEN , {expiresIn:'1h'})
+  res.send({token})
+})
 
     // Get Users
     app.get("/users",async(req,res)=>{
