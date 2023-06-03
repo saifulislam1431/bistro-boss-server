@@ -4,13 +4,29 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cors = require("cors")
 const jwt = require('jsonwebtoken');
 const port = process.env.PORT || 5000;
+const stripe = require("stripe")(process.env.PAYMENT_TOKEN)
 const app = express()
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.8cnv71c.mongodb.net/?retryWrites=true&w=majority`;
 app.use(cors())
 app.use(express.json())
 
-
+const jwtVerify = (req, res, next) => {
+  const authorization = req.headers.authorization;
+  // console.log(authorization);
+  if (!authorization) {
+    return res.status(401).send({ error: true, message: "Unauthorized access" })
+  }
+  const token = authorization.split(' ')[1]
+  // console.log(token);
+  jwt.verify(token, process.env.ACCESS_TOKEN, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ error: true, message: "Unauthorized access" })
+    }
+    req.decoded = decoded
+    next()
+  })
+}
 
 
 
@@ -33,83 +49,143 @@ async function run() {
     const usersCollection = client.db("bistroBoss").collection("users");
 
     // JWT
-app.post("/jwt", async(req,res)=>{
-  const user = req.body;
-  const token = jwt.sign(user , process.env.ACCESS_TOKEN , {expiresIn:'1h'})
-  res.send({token})
-})
+    app.post("/jwt", async (req, res) => {
+      const user = req.body;
+      const token = jwt.sign(user, process.env.ACCESS_TOKEN, { expiresIn: '1h' })
+      res.send({ token })
+    })
+
+
+
+    // Verify admin
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded.email;
+      const query = { email: email }
+      const result = await usersCollection.findOne(query)
+      if (result?.role !== "admin") {
+        return res.status(403).send({ error: true, message: "Forbidden access" })
+      }
+      next()
+    }
+
+
 
     // Get Users
-    app.get("/users",async(req,res)=>{
-      const result =await usersCollection.find().toArray();
+    app.get("/users", jwtVerify, verifyAdmin, async (req, res) => {
+      const result = await usersCollection.find().toArray();
       res.send(result);
     })
 
+
+
     // User operation
-    app.post("/users" , async(req,res)=>{
+    app.post("/users", async (req, res) => {
       const body = req.body;
-      const query = {email:body.email}
+      const query = { email: body.email }
       const existingUser = await usersCollection.findOne(query);
-      if(existingUser){
-        return res.send({message : "User exist"})
+      if (existingUser) {
+        return res.send({ message: "User exist" })
       }
       const result = await usersCollection.insertOne(body);
       res.send(result)
     })
 
-    app.patch("/users/admin/:id", async(req,res)=>{
-      const id = req.params.id;
-      const filter = {_id: new ObjectId(id)}
-      const userUpdate = {
-        $set:{
-          role : "admin"
-        }
-      };
-      const result = await usersCollection.updateOne(filter,userUpdate);
+
+
+    // Admin Check
+    app.get("/users/admin/:email", jwtVerify, async (req, res) => {
+      const email = req.params.email;
+      const query = { email: email }
+      if (req.decoded.email !== email) {
+        return res.send({ admin: false })
+      }
+      const user = await usersCollection.findOne(query);
+      console.log(user);
+
+      const result = { admin: user?.role === "admin" }
       res.send(result)
     })
 
-// Get Menu
+    // Create admin
+    app.patch("/users/admin/:id", async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) }
+      const userUpdate = {
+        $set: {
+          role: "admin"
+        }
+      };
+      const result = await usersCollection.updateOne(filter, userUpdate);
+      res.send(result)
+    })
+
+
+
+
+    // Get Menu
     app.get("/allMenus", async (req, res) => {
       const result = await menuCollection.find().toArray()
       res.send(result)
     })
 
+
+
+
     // Get user cart
-    app.get("/carts", async (req,res)=>{
+    app.get("/carts", jwtVerify, async (req, res) => {
       const email = req.query.email;
-      const query = {email: email}
+      if (!email) {
+        res.send([])
+      }
+      const decodedEmail = req.decoded.email
+      if (email !== decodedEmail) {
+        res.status(403).send({ error: true, message: "Forbidden access" })
+      }
+      const query = { email: email }
       const result = await cartCollection.find(query).toArray();
       res.send(result);
     })
-    
-    app.get("/carts/:id",async(req,res)=>{
+
+    app.get("/carts/:id", async (req, res) => {
       const id = req.params.id;
-      const query = {_id: new ObjectId(id)};
+      const query = { _id: new ObjectId(id) };
       const result = await cartCollection.findOne(query)
       res.send(result)
     })
+
+
 
 
     // Cart Operation
     app.post("/carts", async (req, res) => {
       const body = req.body;
       const result = await cartCollection.insertOne(body)
-      res.send(result) 
+      res.send(result)
     })
 
-    app.delete("/carts/:id" , async(req,res)=>{
+    app.delete("/carts/:id", async (req, res) => {
       const id = req.params.id;
-      const query = {_id: new ObjectId(id)};
+      const query = { _id: new ObjectId(id) };
       const result = await cartCollection.deleteOne(query)
       res.send(result);
     })
 
+    app.post("/create-payment-intent", async (req, res) => {
+      const { price } = req.body;
+      const amount = price * 100;
 
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: "usd",
+        payment_method_types: [
+          "card"
+        ],
 
-
-
-
+      })
+      res.send({
+        clientSecret: paymentIntent.client_secret,
+      })
+    })
 
 
     // Send a ping to confirm a successful connection
