@@ -47,6 +47,7 @@ async function run() {
     const menuCollection = client.db("bistroBoss").collection("menu");
     const cartCollection = client.db("bistroBoss").collection("cart");
     const usersCollection = client.db("bistroBoss").collection("users");
+    const paymentCollection = client.db("bistroBoss").collection("payment");
 
     // JWT
     app.post("/jwt", async (req, res) => {
@@ -100,7 +101,7 @@ async function run() {
         return res.send({ admin: false })
       }
       const user = await usersCollection.findOne(query);
-      console.log(user);
+
 
       const result = { admin: user?.role === "admin" }
       res.send(result)
@@ -170,9 +171,11 @@ async function run() {
       res.send(result);
     })
 
-    app.post("/create-payment-intent", async (req, res) => {
+    app.post("/create-payment-intent", jwtVerify, async (req, res) => {
       const { price } = req.body;
-      const amount = price * 100;
+      // console.log(price)
+      // const total = JSON.parse(price)
+      const amount = price * 100
 
       const paymentIntent = await stripe.paymentIntents.create({
         amount: amount,
@@ -185,6 +188,18 @@ async function run() {
       res.send({
         clientSecret: paymentIntent.client_secret,
       })
+    })
+
+    // Save Payment info
+
+    app.post("/payment", jwtVerify, async (req, res) => {
+      const body = req.body;
+      const result = await paymentCollection.insertOne(body);
+      
+      const query = { _id: { $in: body.CartItems.map(id => new ObjectId(id)) } }
+
+      const deletedRes = await cartCollection.deleteMany(query)
+      res.send({ result, deletedRes })
     })
 
 
